@@ -137,6 +137,8 @@ STM8_SRC = \
 
 INTEL_IA32_SRC = \
 	%D%/quark_x10xx.c \
+	%D%/quark_d10xx.c \
+	%D%/quark_d10xx.h \
 	%D%/quark_d20xx.c \
 	%D%/lakemont.c \
 	%D%/x86_32_common.c
