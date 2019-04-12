@@ -64,17 +64,17 @@ int quark_d_arch_state(struct target *target);
 int quark_d_init_target(struct command_context *cmd_ctx, struct target *target);
 
 int quark_d_halt(struct target *target);
-int quark_d_resume(struct target *target, int current, uint32_t address, int handle_breakpoints, int debug_execution);
-int quark_d_step(struct target *target, int current, uint32_t address, int handle_breakpoints);
+int quark_d_resume(struct target *target, int current, target_addr_t address, int handle_breakpoints, int debug_execution);
+int quark_d_step(struct target *target, int current, target_addr_t address, int handle_breakpoints);
 
 int quark_d_assert_reset(struct target *target);
 int quark_d_deassert_reset(struct target *target);
 int quark_d_soft_reset_halt(struct target *target);
 
-int quark_d_get_gdb_reg_list(struct target *target, struct reg **reg_list[], int *reg_list_size);
+int quark_d_get_gdb_reg_list(struct target *target, struct reg **reg_list[], int *reg_list_size, enum target_register_class reg_class);
 
-int quark_d_read_memory(struct target *target, uint32_t address, uint32_t size, uint32_t count, uint8_t *buffer);
-int quark_d_write_memory(struct target *target, uint32_t address, uint32_t size, uint32_t count, const uint8_t *buffer);
+int quark_d_read_memory(struct target *target, target_addr_t address, uint32_t size, uint32_t count, uint8_t *buffer);
+int quark_d_write_memory(struct target *target, target_addr_t address, uint32_t size, uint32_t count, const uint8_t *buffer);
 
 int quark_d_examine(struct target *target);
 int quark_d_bulk_write_memory(struct target *target,
@@ -144,70 +144,6 @@ quark_d_jtag_set_instruction(struct target* target, int new_instr)
 
         jtag_add_ir_scan(tap, &field, TAP_IDLE);
     }
-
-    return ERROR_OK;
-}
-/**
- * Utility functions
- */
-
-/**
- * @brief Perform single ir -> dr transition through JTAG state machine
- * @param target 
- * @param ir
- * @param buffer
- * This function performs both shift-in and shift-out operation on DR register.
- */
-static int
-add_ir_dr_write(struct target * target, uint8_t ir, size_t dr_length, void * buffer)
-{
-    struct scan_field ir_scan = {
-        .num_bits = target->tap->ir_length,
-        .out_value = (void *)&ir
-    };
-    jtag_add_ir_scan(target->tap, &ir_scan, TAP_IDLE); //TODO: IDLE is not optimal finish state for this transition
-
-    struct scan_field dr_scan = {
-        .num_bits = dr_length,
-        .out_value = buffer
-    };
-    jtag_add_dr_scan(target->tap, 1, &dr_scan, TAP_IDLE);
-
-    return ERROR_OK;
-}
-
-static int
-add_ir_dr_write_word(struct target * target, uint8_t ir, size_t dr_length, uint32_t data)
-{
-    struct scan_field ir_scan = {
-        .num_bits = target->tap->ir_length,
-        .out_value = (void *)&ir
-    };
-    jtag_add_ir_scan(target->tap, &ir_scan, TAP_IDLE); //TODO: IDLE is not optimal finish state for this transition
-
-    struct scan_field dr_scan = {
-        .num_bits = dr_length,
-        .out_value = &data
-    };
-    jtag_add_dr_scan(target->tap, 1, &dr_scan, TAP_IDLE);
-
-    return ERROR_OK;
-}
-
-static int
-add_ir_dr_read(struct target * target, uint8_t ir, size_t dr_length, void * buffer)
-{
-    struct scan_field ir_scan = {
-        .num_bits = target->tap->ir_length,
-        .out_value = (void *)&ir
-    };
-    jtag_add_ir_scan(target->tap, &ir_scan, TAP_IDLE); //TODO: IDLE is not optimal finish state for this transition
-
-    struct scan_field dr_scan = {
-        .num_bits = dr_length,
-        .in_value = buffer
-    };
-    jtag_add_dr_scan(target->tap, 1, &dr_scan, TAP_IDLE);
 
     return ERROR_OK;
 }
@@ -400,13 +336,13 @@ quark_d_target_create(struct target *target, Jim_Interp *interp)
 int quark_d_poll_requested = 0;
 
 static void
-macro_transaction_begin()
+macro_transaction_begin(void)
 {
     inside_macro_transaction = 1;
 }
 
 static int
-macro_transaction_end()
+macro_transaction_end(void)
 {
     inside_macro_transaction = 0;
     if (jtag_execute_queue() != ERROR_OK)
@@ -526,7 +462,7 @@ quark_d_halt(struct target *target)
 }
 
 int
-quark_d_resume(struct target *target, int current, uint32_t address, int handle_breakpoints, int debug_execution)
+quark_d_resume(struct target *target, int current, target_addr_t address, int handle_breakpoints, int debug_execution)
 {
     quark_d_write_flash_shadow_copy(target);
     quark_d_restore_context(target); //upload reg values into HW
@@ -540,7 +476,7 @@ quark_d_resume(struct target *target, int current, uint32_t address, int handle_
 }
 
 int
-quark_d_step(struct target *target, int current, uint32_t address, int handle_breakpoints)
+quark_d_step(struct target *target, int current, target_addr_t address, int handle_breakpoints)
 {   
     //LOG_INFO("quark_d_step");
     quark_d_write_flash_shadow_copy(target);
@@ -613,7 +549,7 @@ quark_d_bulk_write_memory(struct target *target,
 
 //gdb_server expects valid reg values and will use set method for updating reg values
 int
-quark_d_get_gdb_reg_list(struct target *target, struct reg **reg_list[], int *reg_list_size)
+quark_d_get_gdb_reg_list(struct target *target, struct reg **reg_list[], int *reg_list_size, enum target_register_class reg_class)
 {
     unsigned i;
     struct quark_d_arch *arch_info = (struct quark_d_arch *)target->arch_info;
@@ -634,7 +570,7 @@ quark_d_get_gdb_reg_list(struct target *target, struct reg **reg_list[], int *re
 }
 
 int
-quark_d_read_memory(struct target *target, uint32_t address, uint32_t size, uint32_t count, uint8_t *buffer)
+quark_d_read_memory(struct target *target, target_addr_t address, uint32_t size, uint32_t count, uint8_t *buffer)
 {
     unsigned i = 0; //byte count
     uint32_t x = 0; //buffer
@@ -675,7 +611,7 @@ quark_d_read_memory(struct target *target, uint32_t address, uint32_t size, uint
 }
 
 int
-quark_d_write_memory(struct target *target, uint32_t address, uint32_t size, uint32_t count, const uint8_t *buffer)
+quark_d_write_memory(struct target *target, target_addr_t address, uint32_t size, uint32_t count, const uint8_t *buffer)
 {
     unsigned i = 0; //byte count
     uint32_t x = 0; //buffer
@@ -1408,7 +1344,6 @@ quark_d_debug_read_register(struct target * target, uint32_t const address, uint
 int
 quark_d_save_context(struct target * target)
 {
-    int retval;
     uint32_t nc_state;
     struct quark_d_arch * const arch_info = (struct quark_d_arch *)target->arch_info;
     macro_transaction_begin();
@@ -1439,7 +1374,6 @@ quark_d_restore_context(struct target*  target)
 {
     struct quark_d_arch *arch_info = (struct quark_d_arch *)target->arch_info;
     uint32_t reg_value;
-    int retval;
     uint32_t nc_state;
 
     macro_transaction_begin();
@@ -1678,7 +1612,6 @@ quark_d_write_flash_shadow_copy(struct target* target) {
     uint32_t start_addr;
     uint32_t count;
     int ret_val;
-    uint32_t freq_reg;
 
     //check data flash shadow copy
     for (uint32_t i = 0; i < 2; i++) {
